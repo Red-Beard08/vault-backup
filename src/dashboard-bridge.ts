@@ -9,6 +9,12 @@ function host(app: App): DashboardHost | undefined {
   return (app as App & { plugins?: { getPlugin?: (id: string) => unknown } }).plugins?.getPlugin?.("red-beard-dashboard") as DashboardHost | undefined;
 }
 
+function registerWithRetry<T>(app: App, method: "registerWidget" | "registerModule", definition: T): () => void {
+  let dispose: () => void = () => undefined; let timer: number | undefined; let attempts = 0;
+  const attempt = () => { const dashboard = host(app); const fn = dashboard?.[method] as ((value: T) => (() => void)) | undefined; if (fn) { try { dispose = fn(definition) ?? (() => undefined); } catch { /* host unavailable */ } if (timer !== undefined) window.clearTimeout(timer); return; } if (attempts++ < 20) timer = window.setTimeout(attempt, 250); };
+  attempt(); return () => { if (timer !== undefined) window.clearTimeout(timer); dispose(); };
+}
+
 export function registerDashboardModule(app: App, definition: DashboardModuleDefinition): () => void {
   let dispose: () => void = () => undefined;
   let timer: number | undefined;
@@ -27,7 +33,5 @@ export function registerDashboardModule(app: App, definition: DashboardModuleDef
 }
 
 export function registerDashboardWidget(app: App, definition: DashboardWidgetDefinition): () => void {
-  const dashboard = host(app);
-  if (!dashboard?.registerWidget) return () => undefined;
-  try { return dashboard.registerWidget(definition) ?? (() => undefined); } catch { return () => undefined; }
+  return registerWithRetry(app, "registerWidget", definition);
 }
