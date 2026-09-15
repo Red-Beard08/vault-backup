@@ -11,7 +11,7 @@ function host(app: App): DashboardHost | undefined {
 
 function registerWithRetry<T>(app: App, method: "registerWidget" | "registerModule", definition: T): () => void {
   let dispose: () => void = () => undefined; let timer: number | undefined; let attempts = 0;
-  const attempt = () => { const dashboard = host(app); const fn = dashboard?.[method] as ((value: T) => (() => void)) | undefined; if (fn) { try { dispose = fn(definition) ?? (() => undefined); } catch { /* host unavailable */ } if (timer !== undefined) window.clearTimeout(timer); return; } if (attempts++ < 20) timer = window.setTimeout(attempt, 250); };
+  const attempt = () => { const dashboard = host(app); const fn = dashboard?.[method] as ((value: T) => (() => void)) | undefined; if (fn) { try { dispose = fn(definition) ?? (() => undefined); } catch { /* host unavailable */ } if (timer !== undefined) window.clearTimeout(timer); return; } if (attempts++ < 120) timer = window.setTimeout(attempt, 250); };
   attempt(); return () => { if (timer !== undefined) window.clearTimeout(timer); dispose(); };
 }
 
@@ -26,7 +26,7 @@ export function registerDashboardModule(app: App, definition: DashboardModuleDef
       if (timer !== undefined) window.clearTimeout(timer);
       return;
     }
-    if (attempts++ < 20) timer = window.setTimeout(attempt, 250);
+    if (attempts++ < 120) timer = window.setTimeout(attempt, 250);
   };
   attempt();
   return () => { if (timer !== undefined) window.clearTimeout(timer); dispose(); };
