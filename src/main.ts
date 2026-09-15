@@ -1,4 +1,5 @@
 import { App, ItemView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf } from "obsidian";
+import { registerDashboardModule, registerDashboardWidget } from "./dashboard-bridge";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
@@ -64,3 +65,23 @@ export default class VaultBackupPlugin extends Plugin { settings: Settings = DEF
   private async processMobileRequests() { const requests = this.app.vault.getMarkdownFiles().filter(f => f.path.toLowerCase().startsWith("backup requests/") && !f.path.toLowerCase().includes("results/")); for (const file of requests) { const body = await this.app.vault.read(file); if (!/backup[- ]now/i.test(body) || /processed:\s*true/i.test(body)) continue; try { const snapshot = await this.manager.backup(); const result = `---\nprocessed: true\nsource: "[[${file.path.replace(/\.md$/, "")}]]"\nsnapshot: ${snapshot.id}\ncreated: ${snapshot.created}\n---\n\nBackup completed with ${snapshot.entries.length} files.\n`; try { await this.app.vault.createFolder("Backup Requests/Results"); } catch { /* folder exists */ } await this.app.vault.create(`Backup Requests/Results/${snapshot.id}.md`, result); new Notice("Mobile backup request processed."); } catch (e) { new Notice(`Mobile request failed: ${e instanceof Error ? e.message : String(e)}`); } } }
   onunload() { if (this.timer) window.clearInterval(this.timer); if (this.changeTimer) window.clearTimeout(this.changeTimer); this.app.workspace.getLeavesOfType(VIEW).forEach(leaf => leaf.detach()); }
 }
+// Red-Beard Dashboard integration: launcher module and independent summary widget.
+const rbDisposals = new WeakMap<object, () => void>();
+const rbOnload = VaultBackupPlugin.prototype.onload;
+VaultBackupPlugin.prototype.onload = async function(this: VaultBackupPlugin) {
+  await rbOnload.call(this);
+  const disposals = [
+    registerDashboardModule(this.app, { id: "vault-backup", name: "Vault Backup", command: "vault-backup:open-dashboard", icon: "archive", description: "Backup status and recent snapshots.", order: 20 }),
+    registerDashboardWidget(this.app, { id: "vault-backup/overview", name: "Vault Backup", description: "Backup status and recent snapshots.", icon: "archive", defaultLayout: { w: 4, mobileW: 12, h: 2, order: 40 }, mobile: "responsive", render: (_ctx, container) => {
+      container.createEl("p", { text: "Backup status and recent snapshots." });
+      const button = container.createEl("button", { text: "Open Vault Backup" });
+      button.onclick = () => void this.openDashboard();
+    } })
+  ];
+  rbDisposals.set(this, () => disposals.forEach(dispose => dispose()));
+};
+const rbOnunload = VaultBackupPlugin.prototype.onunload;
+VaultBackupPlugin.prototype.onunload = function(this: VaultBackupPlugin) {
+  rbDisposals.get(this)?.();
+ return rbOnunload ? rbOnunload.call(this) : undefined;
+};
