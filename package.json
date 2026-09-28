@@ -1,6 +1,6 @@
 {
   "name": "vault-backup",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Desktop Obsidian vault backup and versioning plugin.",
   "main": "main.js",
   "scripts": { "build": "node esbuild.config.mjs production", "typecheck": "tsc --noEmit", "test": "npm run typecheck && npm run build" },
