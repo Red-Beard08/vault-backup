@@ -43,7 +43,7 @@ class BackupManager {
     const entries = (await this.duplicateInventory()).filter(e => e.size > 0 && !ignored.has(e.path));
     const groups: DuplicateGroup[] = [];
     const chooseMaster = (files: Entry[], key: string): Entry => {
-      const preferred = this.plugin.settings.duplicateMasters?.[key];
+      const preferred = this.plugin.settings.duplicateMasters?.[key] ?? (key.startsWith("hash:") ? this.plugin.settings.duplicateMasters?.[key.slice(5)] : undefined);
       return files.find(file => file.path === preferred) ?? files.slice().sort((a, b) => Number(conflictName(a.path)) - Number(conflictName(b.path)) || a.path.length - b.path.length || a.path.localeCompare(b.path))[0];
     };
     const byHash = new Map<string, Entry[]>();
