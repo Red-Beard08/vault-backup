@@ -18,8 +18,9 @@ function selected(p: string, s: Settings): boolean { const n = norm(p); const ex
 function hash(data: Buffer): string { return createHash("sha256").update(data).digest("hex"); }
 function stamp(): string { return new Date().toISOString().replace(/[:.]/g, "-"); }
 function formatBytes(n: number): string { return n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`; }
-function conflictName(p: string): boolean { return /(?:conflicted copy|conflict|duplicate|\s\(\d+\)(?=\.[^.]+$)| copy(?: \(\d+\))?(?=\.[^.]+$))/i.test(p); }
-function baseName(p: string): string { return path.posix.basename(p).replace(/\.[^.]+$/, "").replace(/(?:\s*\(?conflicted copy.*|\s*copy(?:\s*\(\d+\))?|\s*\(\d+\))$/i, "").trim().toLowerCase(); }
+function fileStem(p: string): string { return path.posix.basename(p).replace(/\.[^.]+$/, ""); }
+function conflictName(p: string): boolean { return /(?:\s+\(\d+\)|\s+\(?(?:conflicted copy|conflict|duplicate|copy)(?:\s+\d+)?\)?)$/i.test(fileStem(p)); }
+function baseName(p: string): string { return fileStem(p).replace(/(?:\s+\(\d+\)|\s+\(?(?:conflicted copy|conflict|duplicate|copy)(?:\s+\d+)?\)?)$/i, "").trim().toLowerCase(); }
 function likelySameName(a: string, b: string): boolean { const x = baseName(a); const y = baseName(b); if (!x || !y) return false; return x === y || x.includes(y) || y.includes(x); }
 function normalizedContent(s: string): string { return s.replace(/^updated:\s.*$/gim, "").replace(/^created:\s.*$/gim, "").replace(/\s+/g, " ").trim().toLowerCase(); }
 function contentSimilarity(a: string, b: string): number { const x = normalizedContent(a); const y = normalizedContent(b); if (!x || !y) return 0; if (x === y) return 1; const xt = new Set(x.split(/\W+/).filter(t => t.length > 2)); const yt = new Set(y.split(/\W+/).filter(t => t.length > 2)); const union = new Set([...xt, ...yt]).size; const overlap = [...xt].filter(t => yt.has(t)).length; const lengthRatio = Math.min(x.length, y.length) / Math.max(x.length, y.length); return union ? (overlap / union) * 0.7 + lengthRatio * 0.3 : 0; }
