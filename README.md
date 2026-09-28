@@ -18,7 +18,7 @@ Snapshots are stored as `Snapshots/<timestamp>/Vault Files/...` with a `snapshot
 - **Preview:** review changed, added, and removed files before creating a snapshot.
 - **Restore:** select a snapshot, select only the files needed, preview mentally from the list, and confirm the overwrite prompt. Restore never permanently deletes a vault file.
 - **Conflict safety:** if a selected file has changed since the chosen snapshot, the current bytes are copied to `Conflicts/<timestamp>/...` before the restore replaces it. This protects edits caused by iCloud convergence or another device.
-- **Duplicate review:** scan for exact content duplicates and common iCloud conflict names such as `copy`, `(2)`, `conflicted copy`, and `conflict`. The scan is advisory and never deletes or moves files.
+- **Duplicate review:** scan for exact content duplicates and common iCloud conflict names such as `copy`, `Filename (2).md`, `Filename (3).md`, `conflicted copy`, and `conflict`. Numbered suffixes are removed from the comparison stem while the original paths remain visible for review. The scan is advisory and never deletes or moves files.
 - **Mobile request:** on iOS, create a note under `Backup Requests/` containing `backup-now`. When the desktop plugin sees it, it creates a snapshot and writes a result note under `Backup Requests/Results/`. This is an iCloud-friendly handoff; the iPhone cannot write directly to an arbitrary PC folder.
 - **Rules:** custom include/exclude values are simple globs such as `Collections/**`, `*.md`, or `.obsidian/**`.
 
