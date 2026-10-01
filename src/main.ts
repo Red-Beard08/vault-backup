@@ -174,8 +174,118 @@ class ConflictModal extends Modal { constructor(app: App, private manager: Backu
 }
 class RestoreModal extends Modal { constructor(app: App, private manager: BackupManager) { super(app); } async onOpen() { this.titleEl.setText("Restore files"); const body = this.contentEl; const all = await this.manager.snapshots(); if (!all.length) { body.createEl("p", { text: "No snapshots found." }); return; } const select = body.createEl("select"); all.forEach(x => select.createEl("option", { value: x.meta.id, text: `${new Date(x.meta.created).toLocaleString()} (${x.meta.entries.length} files)` })); const list = body.createDiv({ cls: "vault-backup-restore-list" }); const render = () => { list.empty(); const snap = all.find(x => x.meta.id === select.value)!.meta; for (const e of snap.entries) new Setting(list).setName(e.path).addToggle(t => t.setValue(false).onChange(() => undefined)); }; select.addEventListener("change", render); render(); new Setting(body).setName("Restore selected files").setDesc("Files overwrite existing notes only after you confirm this action.").addButton(b => b.setButtonText("Restore").setWarning().onClick(async () => { const snap = all.find(x => x.meta.id === select.value)!.meta; const checks = Array.from(list.querySelectorAll("input[type=checkbox]")) as HTMLInputElement[]; const paths = snap.entries.filter((_, i) => checks[i]?.checked).map(e => e.path); if (!paths.length) { new Notice("Select at least one file."); return; } if (!window.confirm(`Restore ${paths.length} selected file(s)? Existing files will be overwritten.`)) return; try { await this.manager.restore(snap, paths); new Notice("Selected files restored."); this.close(); } catch (e) { new Notice(`Restore failed: ${e instanceof Error ? e.message : String(e)}`); } })); } }
 
-class VaultBackupView extends ItemView { constructor(leaf: WorkspaceLeaf, private plugin: VaultBackupPlugin) { super(leaf); } getViewType(): string { return VIEW; } getDisplayText(): string { return "Vault Backup"; } async onOpen() { await this.render(); } async render() { const root = this.containerEl; root.empty(); root.addClass("vault-backup-view"); root.createEl("div", { cls: "vault-backup-hero", text: "Vault Backup" }); root.createEl("p", { text: "Versioned snapshots of your vault to a local PC folder." }); const error = this.plugin.manager.validateDestination(); if (error) root.createDiv({ cls: "vault-backup-warning", text: error }); const grid = root.createDiv({ cls: "vault-backup-metrics" }); const snaps = await this.plugin.manager.snapshots(); const latest = snaps[0]?.meta ?? null; const conflicts = await this.plugin.manager.conflictFiles(); const duplicates = await this.plugin.manager.duplicateGroups(); const totalBytes = latest ? await this.plugin.manager.snapshotBytes(latest) : 0; grid.createDiv({ text: `Last backup\n${latest ? new Date(latest.created).toLocaleString() : "Not yet configured"}` }); grid.createDiv({ text: `History\n${snaps.length} snapshots · ${formatBytes(totalBytes)}` }); grid.createDiv({ text: `Conflicts\n${conflicts.length} preserved files` }); grid.createDiv({ text: `Destination\n${this.plugin.settings.destination || "Choose in Settings"}` }); grid.createDiv({ text: `Preset\n${this.plugin.settings.preset}` }); root.createEl("h3", { text: "Duplicate review" }); root.createEl("p", { text: duplicates.length ? `${duplicates.length} likely duplicate group(s) found. Review masters and duplicates before deleting anything.` : "No duplicate candidates detected." }); const actions = root.createDiv({ cls: "vault-backup-actions" }); const action = (label: string, fn: () => void) => { const b = actions.createEl("button", { text: label }); b.addEventListener("click", fn); }; action("Backup now", async () => { try { await this.plugin.manager.backup(); new Notice("Vault backup completed."); await this.render(); } catch (e) { new Notice(`Backup failed: ${e instanceof Error ? e.message : String(e)}`); } }); action("Preview changes", () => new PreviewModal(this.app, this.plugin.manager).open()); action("Duplicate review", () => new DuplicatesModal(this.app, this.plugin.manager).open()); action("Conflicts", () => new ConflictModal(this.app, this.plugin.manager).open()); action("Restore", () => new RestoreModal(this.app, this.plugin.manager).open()); action("Recovery copy", async () => { try { const s = await this.plugin.manager.latest(); if (!s) throw new Error("No snapshot exists."); const folder = await this.plugin.manager.exportRecovery(s); new Notice(`Recovery copy created: ${folder}`); } catch (e) { new Notice(`Recovery copy failed: ${e instanceof Error ? e.message : String(e)}`); } }); action("Prune snapshots", async () => { await this.plugin.manager.prune(); new Notice("Retention cleanup completed."); }); action("Settings", () => this.plugin.openSettings()); root.createEl("h3", { text: "Recent snapshots" }); if (!snaps.length) root.createEl("p", { text: "No snapshots yet." }); else snaps.slice(0, 10).forEach(s => root.createEl("p", { text: `${new Date(s.meta.created).toLocaleString()} · ${s.meta.entries.length} files` })); } }
+class VaultBackupView extends ItemView {
+  private renderVersion = 0;
 
+  constructor(leaf: WorkspaceLeaf, private plugin: VaultBackupPlugin) { super(leaf); }
+  getViewType(): string { return VIEW; }
+  getDisplayText(): string { return "Vault Backup"; }
+
+  async onOpen(): Promise<void> {
+    // Reveal the dashboard immediately, even while a backup drive is waking up.
+    void this.render();
+  }
+
+  async onClose(): Promise<void> { this.renderVersion++; }
+
+  async render(): Promise<void> {
+    const version = ++this.renderVersion;
+    const current = () => version === this.renderVersion;
+    const content = this.contentEl;
+    content.empty();
+    content.addClass("vault-backup-view");
+    const root = content.createDiv({ cls: "vault-backup-dashboard" });
+    root.createEl("h2", { cls: "vault-backup-hero", text: "Vault Backup" });
+    root.createEl("p", { text: "Versioned snapshots of your vault to a local PC folder." });
+    const error = this.plugin.manager.validateDestination();
+    if (error) root.createDiv({ cls: "vault-backup-warning", text: error });
+
+    // Build every control before starting disk reads. Duplicate scans are opt-in.
+    const actions = root.createDiv({ cls: "vault-backup-actions" });
+    const action = (label: string, fn: () => void | Promise<void>) => {
+      const button = actions.createEl("button", { text: label });
+      button.addEventListener("click", () => {
+        void Promise.resolve().then(fn).catch(e => {
+          new Notice(`${label} failed: ${e instanceof Error ? e.message : String(e)}`);
+        });
+      });
+    };
+    action("Backup now", async () => {
+      await this.plugin.manager.backup();
+      new Notice("Vault backup completed.");
+      if (current()) await this.render();
+    });
+    action("Preview changes", () => new PreviewModal(this.app, this.plugin.manager).open());
+    action("Duplicate review", () => new DuplicatesModal(this.app, this.plugin.manager).open());
+    action("Conflicts", () => new ConflictModal(this.app, this.plugin.manager).open());
+    action("Restore", () => new RestoreModal(this.app, this.plugin.manager).open());
+    action("Recovery copy", async () => {
+      const snapshot = await this.plugin.manager.latest();
+      if (!snapshot) throw new Error("No snapshot exists.");
+      const folder = await this.plugin.manager.exportRecovery(snapshot);
+      new Notice(`Recovery copy created: ${folder}`);
+    });
+    action("Prune snapshots", async () => {
+      await this.plugin.manager.prune();
+      new Notice("Retention cleanup completed.");
+      if (current()) await this.render();
+    });
+    action("Refresh", () => this.render());
+    action("Settings", () => this.plugin.openSettings());
+
+    const grid = root.createDiv({ cls: "vault-backup-metrics" });
+    const lastBackup = grid.createDiv({ text: "Last backup\nLoading…" });
+    const history = grid.createDiv({ text: "History\nLoading…" });
+    const conflicts = grid.createDiv({ text: "Conflicts\nLoading…" });
+    grid.createDiv({ text: `Destination\n${this.plugin.settings.destination || "Choose in Settings"}` });
+    grid.createDiv({ text: `Preset\n${this.plugin.settings.preset}` });
+    root.createEl("h3", { text: "Duplicate review" });
+    root.createEl("p", { text: "Open Duplicate review to scan for exact matches, iCloud copies, and similar notes. Large vaults may take a while to scan." });
+    root.createEl("h3", { text: "Recent snapshots" });
+    const recent = root.createDiv();
+    recent.createEl("p", { text: "Loading snapshot history…" });
+
+    if (error) {
+      lastBackup.setText("Last backup\nUnavailable");
+      history.setText("History\nUnavailable");
+      conflicts.setText("Conflicts\nUnavailable");
+      recent.empty();
+      recent.createEl("p", { text: "Choose a valid backup destination in Settings, then select Refresh." });
+      return;
+    }
+
+    const loadSnapshots = async () => {
+      try {
+        const snapshots = await this.plugin.manager.snapshots();
+        const latest = snapshots[0]?.meta ?? null;
+        const bytes = latest ? await this.plugin.manager.snapshotBytes(latest) : 0;
+        if (!current()) return;
+        lastBackup.setText(`Last backup\n${latest ? new Date(latest.created).toLocaleString() : "No backups yet"}`);
+        history.setText(`History\n${snapshots.length} snapshots · ${formatBytes(bytes)}`);
+        recent.empty();
+        if (!snapshots.length) recent.createEl("p", { text: "No snapshots yet." });
+        else snapshots.slice(0, 10).forEach(snapshot => recent.createEl("p", {
+          text: `${new Date(snapshot.meta.created).toLocaleString()} · ${snapshot.meta.entries.length} files`
+        }));
+      } catch (e) {
+        if (!current()) return;
+        lastBackup.setText("Last backup\nUnavailable");
+        history.setText("History\nUnavailable");
+        recent.empty();
+        recent.createDiv({ cls: "vault-backup-warning", text: `Could not load snapshot history: ${e instanceof Error ? e.message : String(e)}. Check the destination and select Refresh.` });
+      }
+    };
+    const loadConflicts = async () => {
+      try {
+        const files = await this.plugin.manager.conflictFiles();
+        if (current()) conflicts.setText(`Conflicts\n${files.length} preserved files`);
+      } catch (e) {
+        if (current()) conflicts.setText(`Conflicts\nCould not load: ${e instanceof Error ? e.message : String(e)}. Select Refresh to retry.`);
+      }
+    };
+    await Promise.all([loadSnapshots(), loadConflicts()]);
+  }
+}
 class VaultBackupSettingTab extends PluginSettingTab { constructor(app: App, private plugin: VaultBackupPlugin) { super(app, plugin); } display() { const { containerEl } = this; containerEl.empty(); containerEl.createEl("h2", { text: "Vault Backup" }); containerEl.createEl("p", { text: "Backups run on this desktop only. Choose a folder outside the iCloud vault." }); new Setting(containerEl).setName("Backup destination").setDesc("Absolute PC path, for example D:\\Obsidian Backups\\Red-Beard").addText(t => t.setValue(this.plugin.settings.destination).onChange(async v => { this.plugin.settings.destination = v.trim(); await this.plugin.saveSettings(); })); new Setting(containerEl).setName("Preset").addDropdown(d => d.addOptions({ markdown: "Markdown only", content: "Vault content", full: "Full vault (including .obsidian)", custom: "Custom rules" }).setValue(this.plugin.settings.preset).onChange(async v => { this.plugin.settings.preset = v as Preset; await this.plugin.saveSettings(); this.display(); })); if (this.plugin.settings.preset === "custom") { new Setting(containerEl).setName("Include rules").setDesc("One glob per line; blank means all files").addTextArea(t => t.setValue(this.plugin.settings.include.join("\n")).onChange(async v => { this.plugin.settings.include = v.split(/\r?\n/).map(x => x.trim()).filter(Boolean); await this.plugin.saveSettings(); })); } new Setting(containerEl).setName("Exclude rules").setDesc("One glob per line (for example .trash/**)").addTextArea(t => t.setValue(this.plugin.settings.exclude.join("\n")).onChange(async v => { this.plugin.settings.exclude = v.split(/\r?\n/).map(x => x.trim()).filter(Boolean); await this.plugin.saveSettings(); })); new Setting(containerEl).setName("Schedule (minutes)").addText(t => t.setValue(String(this.plugin.settings.scheduleMinutes)).setPlaceholder("60").onChange(async v => { this.plugin.settings.scheduleMinutes = Math.max(0, Number(v) || 0); await this.plugin.saveSettings(); })); new Setting(containerEl).setName("Change threshold").setDesc("Automatic backup after this many changed files; 0 disables it.").addText(t => t.setValue(String(this.plugin.settings.changeThreshold)).onChange(async v => { this.plugin.settings.changeThreshold = Math.max(0, Number(v) || 0); await this.plugin.saveSettings(); })); new Setting(containerEl).setName("Keep snapshots").addText(t => t.setValue(String(this.plugin.settings.retentionCount)).onChange(async v => { this.plugin.settings.retentionCount = Math.max(1, Number(v) || 1); await this.plugin.saveSettings(); })); new Setting(containerEl).setName("Keep snapshots for days").addText(t => t.setValue(String(this.plugin.settings.retentionDays)).onChange(async v => { this.plugin.settings.retentionDays = Math.max(1, Number(v) || 1); await this.plugin.saveSettings(); })); containerEl.createEl("h3", { text: "Duplicate review" }); new Setting(containerEl).setName("Near-duplicate similarity threshold").setDesc("Review Markdown files with the same normalized name when their content is this similar. Exact matches are always shown.").addText(t => t.setValue(String(this.plugin.settings.duplicateSimilarityThreshold ?? 0.86)).onChange(async v => { const number = Number(v); this.plugin.settings.duplicateSimilarityThreshold = Math.min(0.99, Math.max(0.5, Number.isFinite(number) ? number : 0.86)); await this.plugin.saveSettings(); })); new Setting(containerEl).setName("Scan hidden/config files").setDesc("Include iCloud-style copies of Obsidian configuration files, such as community-plugins (2).json, in duplicate review.").addToggle(t => t.setValue(this.plugin.settings.scanHiddenDuplicateFiles ?? true).onChange(async v => { this.plugin.settings.scanHiddenDuplicateFiles = v; await this.plugin.saveSettings(); })); new Setting(containerEl).addButton(b => b.setButtonText("Test destination").onClick(() => new Notice(this.plugin.manager.validateDestination() ?? "Destination is valid."))); } }
 
 export default class VaultBackupPlugin extends Plugin { settings: Settings = DEFAULTS; manager!: BackupManager; lastBackup = ""; private timer?: number; private changeTimer?: number; async onload() { this.settings = Object.assign({}, DEFAULTS, await this.loadData()); this.manager = new BackupManager(this.app, this); this.addSettingTab(new VaultBackupSettingTab(this.app, this)); this.registerView(VIEW, leaf => new VaultBackupView(leaf, this)); this.addRibbonIcon("archive-restore", "Open Vault Backup", () => this.openDashboard()); this.addCommand({ id: "open-dashboard", name: "Open dashboard", callback: () => this.openDashboard() }); this.addCommand({ id: "backup-now", name: "Backup now", callback: () => this.runBackup() }); this.addCommand({ id: "preview-changes", name: "Preview changes", callback: () => new PreviewModal(this.app, this.manager).open() }); this.addCommand({ id: "duplicate-review", name: "Review duplicate files", callback: () => new DuplicatesModal(this.app, this.manager).open() }); this.addCommand({ id: "restore", name: "Restore selected files", callback: () => new RestoreModal(this.app, this.manager).open() }); this.addCommand({ id: "prune", name: "Prune snapshots", callback: () => this.manager.prune() }); this.addCommand({ id: "process-mobile-requests", name: "Process mobile backup requests", callback: () => this.processMobileRequests() }); const queue = () => { if (this.changeTimer) window.clearTimeout(this.changeTimer); this.changeTimer = window.setTimeout(() => void this.autoCheck(), 15000); }; this.registerEvent(this.app.vault.on("create", queue)); this.registerEvent(this.app.vault.on("modify", queue)); this.registerEvent(this.app.vault.on("delete", queue)); this.registerEvent(this.app.vault.on("rename", queue)); if (this.settings.scheduleMinutes > 0) this.timer = window.setInterval(() => void this.autoCheck(), Math.max(5, this.settings.scheduleMinutes) * 60000); }

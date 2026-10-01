@@ -11,6 +11,10 @@ Vault Backup is a **desktop-only** Obsidian plugin by Red-Beard. It creates vers
 
 Snapshots are stored as `Snapshots/<timestamp>/Vault Files/...` with a `snapshot.json` manifest containing hashes, sizes, and the selected-file list. A temporary staging folder is renamed into place only after the copy completes. The newest snapshot is always retained; count and age settings prune older snapshots.
 
+The dashboard shows its controls immediately while snapshot history and conflict counts load independently. Select **Refresh** to update the status or retry a failed read. Duplicate scans start when you open **Duplicate review**, so opening the dashboard does not read every vault file.
+
+Version 1.2.1 fixes a title-only dashboard by preserving Obsidian's view container and removing the full duplicate scan from dashboard loading.
+
 ## Workflows
 
 - **Scheduled/change-triggered backup:** configure minutes and a changed-file threshold. A background check creates a snapshot when either schedule check sees enough changes. Set the threshold to `0` to disable automatic change-triggered backups.
@@ -38,6 +42,7 @@ This plugin runs on desktop because iOS cannot write to an arbitrary PC path. It
 npm ci
 npm run typecheck
 npm run build
+npm test
 ```
 
 Manual installation: copy `main.js`, `manifest.json`, and `styles.css` into `.obsidian/plugins/vault-backup/`, enable the plugin, and configure the destination. No Dataview, network access, or external service is required.
